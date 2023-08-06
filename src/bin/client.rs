@@ -11,7 +11,7 @@ struct Client {
 }
 
 impl Client {
-    pub fn new(username: String, server: String) -> Self {
+    pub const fn new(username: String, server: String) -> Self {
         Self {
             username,
             server,
@@ -25,7 +25,7 @@ impl Client {
     }
 
     pub fn close_connection(&mut self) {
-        self.connection = None
+        self.connection = None;
     }
 
     pub fn send_message(&mut self, message: &str) -> io::Result<()> {
@@ -64,17 +64,17 @@ fn read_input_line<W: Write, R: BufRead>(
 }
 
 fn get_server_address<W: Write, R: BufRead>(output: &mut W, input: &mut R) -> io::Result<String> {
-    match args().nth(1) {
-        Some(server) => Ok(server),
-        None => read_input_line(output, input, "Enter the address of the server: "),
-    }
+    args().nth(1).map_or_else(
+        || read_input_line(output, input, "Enter the address of the server: "),
+        Ok,
+    )
 }
 
 fn get_username<W: Write, R: BufRead>(output: &mut W, input: &mut R) -> io::Result<String> {
-    match args().nth(2) {
-        Some(username) => Ok(username),
-        None => read_input_line(output, input, "Enter your username: "),
-    }
+    args().nth(2).map_or_else(
+        || read_input_line(output, input, "Enter your username: "),
+        Ok,
+    )
 }
 
 fn main() {

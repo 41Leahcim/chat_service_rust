@@ -12,7 +12,7 @@ struct Message {
 }
 
 impl Message {
-    pub fn new(username: String, message: String) -> Self {
+    pub const fn new(username: String, message: String) -> Self {
         Self { username, message }
     }
 
@@ -47,7 +47,7 @@ fn read_message(mut connection: &mut TcpStream) -> io::Result<MessageResult> {
     println!("Received message: {message}");
     let mut sections = message.split(": ");
     let Some(username) = sections.next() else {
-        connection.write_all("Received an empty message!".as_bytes())?;
+        connection.write_all(b"Received an empty message!")?;
         return Ok(MessageResult::NoUsername);
     };
     let message = sections
@@ -73,11 +73,10 @@ fn send_messages(
         .iter()
         .map(|message| {
             if message.username() == username {
-                Message::new("you".to_owned(), message.message().to_owned())
+                format!("you: {}", message.message())
             } else {
-                message.to_owned()
+                message.to_string()
             }
-            .to_string()
         })
         .collect::<Vec<String>>()
         .join("\n");
@@ -113,7 +112,7 @@ fn main() {
                     io::ErrorKind::TimedOut => eprintln!("Request timed out"),
                     io::ErrorKind::Interrupted => eprintln!("Receiving data was interrupted"),
                     io::ErrorKind::Unsupported => {
-                        eprintln!("Receiving data over internet is not supported")
+                        eprintln!("Receiving data over internet is not supported");
                     }
                     io::ErrorKind::OutOfMemory => eprintln!("Request used too much memory"),
                     io::ErrorKind::Other => eprintln!("Unexpected error occured"),
@@ -133,7 +132,7 @@ fn main() {
                 io::ErrorKind::TimedOut => eprintln!("Request timed out"),
                 io::ErrorKind::Interrupted => eprintln!("Sending data was interrupted"),
                 io::ErrorKind::Unsupported => {
-                    eprintln!("Sending data over internet is not supported")
+                    eprintln!("Sending data over internet is not supported");
                 }
                 io::ErrorKind::OutOfMemory => eprintln!("Request used too much memory"),
                 io::ErrorKind::Other => eprintln!("Unexpected error occured"),
