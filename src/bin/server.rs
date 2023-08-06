@@ -5,7 +5,7 @@ use std::{
 
 const MAX_MESSAGES: usize = 100;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct Message {
     username: String,
     message: String,
@@ -50,10 +50,7 @@ fn read_message(mut connection: &mut TcpStream) -> io::Result<MessageResult> {
         connection.write_all(b"Received an empty message!")?;
         return Ok(MessageResult::NoUsername);
     };
-    let message = sections
-        .map(str::to_owned)
-        .collect::<Vec<String>>()
-        .join(": ");
+    let message = sections.collect::<Vec<&str>>().join(": ");
     if message.is_empty() {
         Ok(MessageResult::NoMessage(username.to_owned()))
     } else {
