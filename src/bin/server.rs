@@ -1,11 +1,14 @@
-use std::{
-    io::{self, BufRead, BufReader, Write},
+use std::io;
+
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
+    task::JoinHandle,
 };
 
 const MAX_MESSAGES: usize = 100;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Message {
     username: String,
     message: String,
@@ -36,18 +39,18 @@ enum MessageResult {
     NoUsername,
     NoMessage(String),
     Message(Message),
+    Error(io::Error),
 }
 
-fn read_message(mut connection: &mut TcpStream) -> io::Result<MessageResult> {
+async fn read_message(mut connection: &mut TcpStream) -> io::Result<MessageResult> {
     let receiver = BufReader::new(&mut connection);
-    let Some(message) = receiver.lines().next() else {
+    let Some(message) = receiver.lines().next_line().await? else {
         return Ok(MessageResult::NothingReceived);
     };
-    let message = message?;
     println!("Received message: {message}");
     let mut sections = message.split(": ");
     let Some(username) = sections.next() else {
-        connection.write_all(b"Received an empty message!")?;
+        connection.write_all(b"Received an empty message!").await?;
         return Ok(MessageResult::NoUsername);
     };
     let message = sections.collect::<Vec<&str>>().join(": ");
@@ -61,7 +64,7 @@ fn read_message(mut connection: &mut TcpStream) -> io::Result<MessageResult> {
     }
 }
 
-fn send_messages(
+async fn send_messages(
     connection: &mut TcpStream,
     messages: &[Message],
     username: &str,
@@ -79,62 +82,85 @@ fn send_messages(
         .join("\n");
     println!("Created response");
 
-    connection.write_all(response.as_bytes())
+    connection.write_all(response.as_bytes()).await
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let mut messages = Vec::new();
-    let listener = TcpListener::bind("127.0.0.1:2000").unwrap();
-    for connection in listener.incoming() {
-        println!("Received connection");
-        let Ok(mut connection) = connection else {
+    let mut tasks: Vec<JoinHandle<MessageResult>> = Vec::new();
+    let listener = TcpListener::bind("127.0.0.1:2000").await.unwrap();
+    loop {
+        let Ok((mut connection, _)) = listener.accept().await else {
             continue;
         };
 
-        let username = match read_message(&mut connection) {
-            Ok(message_state) => match message_state {
-                MessageResult::NoUsername | MessageResult::NothingReceived => continue,
-                MessageResult::Message(message) => {
-                    println!("Parsed message: {message:?}");
-                    let username = message.username().to_owned();
-                    messages.push(message);
-                    username
+        let mut i = 0;
+        while i < tasks.len() {
+            if !tasks[i].is_finished() {
+                i += 1;
+                continue;
+            }
+            let task = tasks.remove(i);
+            match task.await.unwrap() {
+                MessageResult::Error(error) => {
+                    match error.kind() {
+                        io::ErrorKind::BrokenPipe => eprintln!("A pipe closed unexpectedly"),
+                        io::ErrorKind::InvalidData => eprintln!("Received invalid data"),
+                        io::ErrorKind::TimedOut => eprintln!("Request timed out"),
+                        io::ErrorKind::Interrupted => eprintln!("Receiving data was interrupted"),
+                        io::ErrorKind::Unsupported => {
+                            eprintln!("Receiving data over internet is not supported");
+                        }
+                        io::ErrorKind::OutOfMemory => eprintln!("Request used too much memory"),
+                        io::ErrorKind::Other => eprintln!("Unexpected error occured"),
+                        error => eprintln!("Unhandled error occured: {error}"),
+                    }
+                    continue;
                 }
-                MessageResult::NoMessage(username) => username,
-            },
-            Err(error) => {
+                MessageResult::Message(message) => messages.push(message),
+                _ => (),
+            };
+        }
+
+        while messages.len() > MAX_MESSAGES {
+            messages.remove(0);
+        }
+
+        let messages_to_send = messages.clone();
+        tasks.push(tokio::spawn(async move {
+            let (username, message) = match read_message(&mut connection).await {
+                Ok(message_state) => match message_state {
+                    MessageResult::NoUsername => return MessageResult::NoUsername,
+                    MessageResult::NothingReceived => return MessageResult::NothingReceived,
+                    MessageResult::Message(message) => {
+                        println!("Parsed message: {message:?}");
+                        let username = message.username().to_owned();
+                        (username, Some(message))
+                    }
+                    MessageResult::NoMessage(username) => (username, None),
+                    MessageResult::Error(error) => return MessageResult::Error(error),
+                },
+                Err(error) => return MessageResult::Error(error),
+            };
+            if let Err(error) = send_messages(&mut connection, &messages_to_send, &username).await {
                 match error.kind() {
                     io::ErrorKind::BrokenPipe => eprintln!("A pipe closed unexpectedly"),
-                    io::ErrorKind::InvalidData => eprintln!("Received invalid data"),
                     io::ErrorKind::TimedOut => eprintln!("Request timed out"),
-                    io::ErrorKind::Interrupted => eprintln!("Receiving data was interrupted"),
+                    io::ErrorKind::Interrupted => eprintln!("Sending data was interrupted"),
                     io::ErrorKind::Unsupported => {
-                        eprintln!("Receiving data over internet is not supported");
+                        eprintln!("Sending data over internet is not supported");
                     }
                     io::ErrorKind::OutOfMemory => eprintln!("Request used too much memory"),
                     io::ErrorKind::Other => eprintln!("Unexpected error occured"),
                     error => eprintln!("Unhandled error occured: {error}"),
                 }
-                continue;
+            };
+            if let Some(message) = message {
+                MessageResult::Message(message)
+            } else {
+                MessageResult::NoMessage(username)
             }
-        };
-
-        if messages.len() > MAX_MESSAGES {
-            messages.remove(0);
-        }
-
-        if let Err(error) = send_messages(&mut connection, &messages, &username) {
-            match error.kind() {
-                io::ErrorKind::BrokenPipe => eprintln!("A pipe closed unexpectedly"),
-                io::ErrorKind::TimedOut => eprintln!("Request timed out"),
-                io::ErrorKind::Interrupted => eprintln!("Sending data was interrupted"),
-                io::ErrorKind::Unsupported => {
-                    eprintln!("Sending data over internet is not supported");
-                }
-                io::ErrorKind::OutOfMemory => eprintln!("Request used too much memory"),
-                io::ErrorKind::Other => eprintln!("Unexpected error occured"),
-                error => eprintln!("Unhandled error occured: {error}"),
-            }
-        };
+        }));
     }
 }
