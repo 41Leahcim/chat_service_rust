@@ -42,25 +42,27 @@ enum MessageResult {
     Error(io::Error),
 }
 
-async fn read_message(mut connection: &mut TcpStream) -> io::Result<MessageResult> {
+async fn read_message(mut connection: &mut TcpStream) -> MessageResult {
     let receiver = BufReader::new(&mut connection);
-    let Some(message) = receiver.lines().next_line().await? else {
-        return Ok(MessageResult::NothingReceived);
+    let message = match receiver.lines().next_line().await {
+        Ok(Some(message)) => message,
+        Ok(None) => return MessageResult::NothingReceived,
+        Err(error) => return MessageResult::Error(error),
     };
     println!("Received message: {message}");
     let mut sections = message.split(": ");
     let Some(username) = sections.next() else {
-        connection.write_all(b"Received an empty message!").await?;
-        return Ok(MessageResult::NoUsername);
+        return if let Err(error) = connection.write_all(b"Received an empty message!").await {
+            MessageResult::Error(error)
+        } else {
+            MessageResult::NoUsername
+        };
     };
     let message = sections.collect::<Vec<&str>>().join(": ");
     if message.is_empty() {
-        Ok(MessageResult::NoMessage(username.to_owned()))
+        MessageResult::NoMessage(username.to_owned())
     } else {
-        Ok(MessageResult::Message(Message::new(
-            username.to_owned(),
-            message,
-        )))
+        MessageResult::Message(Message::new(username.to_owned(), message))
     }
 }
 
@@ -130,18 +132,15 @@ async fn main() {
         let messages_to_send = messages.clone();
         tasks.push(tokio::spawn(async move {
             let (username, message) = match read_message(&mut connection).await {
-                Ok(message_state) => match message_state {
-                    MessageResult::NoUsername => return MessageResult::NoUsername,
-                    MessageResult::NothingReceived => return MessageResult::NothingReceived,
-                    MessageResult::Message(message) => {
-                        println!("Parsed message: {message:?}");
-                        let username = message.username().to_owned();
-                        (username, Some(message))
-                    }
-                    MessageResult::NoMessage(username) => (username, None),
-                    MessageResult::Error(error) => return MessageResult::Error(error),
-                },
-                Err(error) => return MessageResult::Error(error),
+                MessageResult::NoUsername => return MessageResult::NoUsername,
+                MessageResult::NothingReceived => return MessageResult::NothingReceived,
+                MessageResult::Message(message) => {
+                    println!("Parsed message: {message:?}");
+                    let username = message.username().to_owned();
+                    (username, Some(message))
+                }
+                MessageResult::NoMessage(username) => (username, None),
+                MessageResult::Error(error) => return MessageResult::Error(error),
             };
             if let Err(error) = send_messages(&mut connection, &messages_to_send, &username).await {
                 match error.kind() {
