@@ -135,22 +135,30 @@ fn init() -> (io::Stdin, io::Stdout, Client) {
 
     // Parse the arguments
     let args = Args::parse();
+    println!("{args:?}");
+
+    let server = args.server;
+    println!("{server:?}");
 
     // Read the configuration
-    let server = args.server.unwrap_or(
+    let server = server.unwrap_or_else(|| {
         read_input_line(
             &mut stdout,
             &mut stdin.lock(),
             "Enter the address of the server: ",
         )
-        .unwrap(),
-    );
-    let username = args.username.unwrap_or(
-        read_input_line(&mut stdout, &mut stdin.lock(), "Enter your username: ").unwrap(),
-    );
+        .unwrap()
+    });
+    let username = args.username.unwrap_or_else(|| {
+        read_input_line(&mut stdout, &mut stdin.lock(), "Enter your username: ").unwrap()
+    });
 
     // Create a new client
-    (stdin, stdout, Client::new(username, server))
+    (
+        stdin,
+        stdout,
+        Client::new(username.trim().to_owned(), server.trim().to_owned()),
+    )
 }
 
 fn main() {
