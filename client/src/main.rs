@@ -1,8 +1,9 @@
 use std::{
-    env::args,
     io::{self, BufRead, Read, Write},
     net::TcpStream,
 };
+
+use clap::Parser;
 
 /// Controlls the connection with the server
 struct Client {
@@ -91,38 +92,65 @@ fn read_input_line<W: Write, R: BufRead>(
     Ok(buffer)
 }
 
-/// Get the server address from an argument passed when starting the program or from the screen
-fn get_server_address<W: Write, R: BufRead>(output: &mut W, input: &mut R) -> io::Result<String> {
-    // Take the server address from the second argument or from the screen
-    args().nth(1).map_or_else(
-        || read_input_line(output, input, "Enter the address of the server: "),
-        Ok,
-    )
+/// Handles most if not all errors you could get with this application
+fn handle_io_error(error: io::ErrorKind) {
+    match error {
+        io::ErrorKind::ConnectionRefused => panic!("The server refused to connect!"),
+        io::ErrorKind::ConnectionReset => panic!("The connection was reset by the server!"),
+        io::ErrorKind::ConnectionAborted => panic!("The server aborted the connection!"),
+        io::ErrorKind::NotConnected => {
+            panic!("The application tried to send the message before the connection was active!")
+        }
+        io::ErrorKind::AddrNotAvailable => {
+            panic!("The requested address wasn't available!")
+        }
+        io::ErrorKind::BrokenPipe => panic!("The pipe broke!"),
+        io::ErrorKind::InvalidInput => panic!("The server address is invalid!\n{error}"),
+        io::ErrorKind::TimedOut => panic!("The connection took too long!"),
+        io::ErrorKind::WriteZero => panic!("0 bytes were sent!"),
+        io::ErrorKind::Interrupted => panic!("The connection was interrupted!"),
+        io::ErrorKind::Unsupported => panic!("You don't have an internet connection!"),
+        io::ErrorKind::OutOfMemory => panic!("Out of memory memory!"),
+        io::ErrorKind::Other => panic!("An unknown error occured!\n{error}"),
+        io::ErrorKind::InvalidData => panic!("The message wasn't valid utf-8!"),
+        error => panic!("An unhandled error occured!\n{error}"),
+    }
 }
 
-/// Get the username from an argument passed when starting the program or from the screen
-fn get_username<W: Write, R: BufRead>(output: &mut W, input: &mut R) -> io::Result<String> {
-    args().nth(2).map_or_else(
-        || read_input_line(output, input, "Enter your username: "),
-        Ok,
-    )
+#[derive(Debug, Parser)]
+struct Args {
+    /// Server address
+    #[arg(short, long)]
+    server: Option<String>,
+
+    /// Your username
+    #[arg(short, long)]
+    username: Option<String>,
 }
 
-fn main() {
+fn init() -> (io::Stdin, io::Stdout, Client) {
     // Take a reference to stdout and stdin
     let mut stdout = io::stdout();
     let stdin = io::stdin();
 
+    // Parse the arguments
+    let args = Args::parse();
+
     // Read the configuration
-    let server = get_server_address(&mut stdout, &mut stdin.lock())
-        .expect("Failed to read the address of the server");
-    let username =
-        get_username(&mut stdout, &mut stdin.lock()).expect("Failed to read your username");
-    let username = username.trim();
+    let server = args
+        .server
+        .unwrap_or(read_input_line(&mut stdout, &mut stdin.lock(), "Enter t").unwrap());
+    let username = args
+        .username
+        .unwrap_or(read_input_line(&mut stdout, &mut stdin.lock(), "Enter your username").unwrap());
 
     // Create a new client
-    let mut client = Client::new(username.to_owned(), server.trim().to_owned());
+    (stdin, stdout, Client::new(username, server))
+}
 
+fn main() {
+    // Initialize the client
+    let (stdin, mut stdout, mut client) = init();
     loop {
         // Read the message from the screen
         let message = match read_input_line(
@@ -140,45 +168,12 @@ fn main() {
 
         // Send the message
         if let Err(error) = client.send_message(message) {
-            match error.kind() {
-                io::ErrorKind::ConnectionRefused => panic!("The server refused to connect!"),
-                io::ErrorKind::ConnectionReset => panic!("The connection was reset by the server!"),
-                io::ErrorKind::ConnectionAborted => panic!("The server aborted the connection!"),
-                io::ErrorKind::NotConnected => panic!(
-                    "The application tried to send the message before the connection was active!"
-                ),
-                io::ErrorKind::AddrNotAvailable => {
-                    panic!("The requested address wasn't available!")
-                }
-                io::ErrorKind::BrokenPipe => panic!("The pipe broke!"),
-                io::ErrorKind::InvalidInput => panic!("The server address is invalid!\n{error}"),
-                io::ErrorKind::TimedOut => panic!("The connection took too long!"),
-                io::ErrorKind::WriteZero => panic!("0 bytes were sent!"),
-                io::ErrorKind::Interrupted => panic!("The connection was interrupted!"),
-                io::ErrorKind::Unsupported => panic!("You don't have an internet connection!"),
-                io::ErrorKind::OutOfMemory => panic!("Sending the message took too much memory!"),
-                io::ErrorKind::Other => panic!("An unknown error occured!\n{error}"),
-                error => panic!("An unhandled error occured!\n{error}"),
-            }
+            handle_io_error(error.kind())
         };
 
         // Receive messages from the server
         match client.receive_messages() {
-            Err(error) => match error.kind() {
-                io::ErrorKind::ConnectionRefused => panic!("The server refused to connect!"),
-                io::ErrorKind::ConnectionReset => panic!("The connection was reset by the server!"),
-                io::ErrorKind::ConnectionAborted => panic!("The server aborted the connection!"),
-                io::ErrorKind::NotConnected => panic!(
-                    "The application tried to send the message before the connection was active!"
-                ),
-                io::ErrorKind::BrokenPipe => panic!("The pipe broke!"),
-                io::ErrorKind::InvalidData => panic!("The message wasn't valid utf-8!"),
-                io::ErrorKind::TimedOut => panic!("The connection took too long!"),
-                io::ErrorKind::Interrupted => panic!("The connection was interrupted!"),
-                io::ErrorKind::OutOfMemory => panic!("The received messages took too much memory!"),
-                io::ErrorKind::Other => panic!("An unknown error occured!\n{error}"),
-                error => panic!("An unhandled error occured!\n{error}"),
-            },
+            Err(error) => handle_io_error(error.kind()),
             Ok(messages) => println!("{messages}"),
         };
 
