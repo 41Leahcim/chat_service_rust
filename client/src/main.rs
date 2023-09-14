@@ -137,12 +137,17 @@ fn init() -> (io::Stdin, io::Stdout, Client) {
     let args = Args::parse();
 
     // Read the configuration
-    let server = args
-        .server
-        .unwrap_or(read_input_line(&mut stdout, &mut stdin.lock(), "Enter t").unwrap());
-    let username = args
-        .username
-        .unwrap_or(read_input_line(&mut stdout, &mut stdin.lock(), "Enter your username").unwrap());
+    let server = args.server.unwrap_or(
+        read_input_line(
+            &mut stdout,
+            &mut stdin.lock(),
+            "Enter the address of the server: ",
+        )
+        .unwrap(),
+    );
+    let username = args.username.unwrap_or(
+        read_input_line(&mut stdout, &mut stdin.lock(), "Enter your username: ").unwrap(),
+    );
 
     // Create a new client
     (stdin, stdout, Client::new(username, server))
