@@ -45,10 +45,8 @@ impl Client {
         }
 
         // Send the message
-        self.connection
-            .as_mut()
-            .unwrap()
-            .write_fmt(format_args!("{}: {message}\n", self.username))?;
+        let connection = self.connection.as_mut().unwrap();
+        writeln!(connection, "{}: {message}", self.username)?;
         Ok(())
     }
 
